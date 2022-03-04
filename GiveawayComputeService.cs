@@ -1,0 +1,172 @@
+﻿using Few.Giveaway.Domain;
+using FEW.Db.CQS;
+using FEW.Db.DbConnection;
+using Serilog;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace FEW.GiveawayBot.App.Services
+{
+    public class GiveawayComputeService
+    {
+        private readonly ILogger _logger;
+        private readonly IDbConnectionFactory _dbConnectionFactory;
+
+        public GiveawayComputeService(IDbConnectionFactory dbConnectionFactory, ILogger logger)
+        {
+            _dbConnectionFactory = dbConnectionFactory;
+            _logger = logger;
+        }
+
+        public async Task<List<ulong>> RollWinners(
+            List<RollComputeUserData> userDatas, 
+            ulong roleId,
+            int targetWinnerCount)
+        {
+            if (userDatas.Count <= targetWinnerCount)
+                return userDatas.Select(u => u.UserId).ToList();
+
+            var origPenalties = await GetPenalties(
+                userDatas,
+                roleId
+            );
+
+            var origPenaltyUserIds = origPenalties.Select(p => p.UserId).ToList();
+
+            var computePenalties = new List<GiveawayPenaltySignup>();
+
+            // Users with more than 1 entry are added to the pool here
+            foreach (var userData in userDatas)
+            {
+                if (origPenaltyUserIds.Contains(userData.UserId))
+                {
+                    var origPenalty = origPenalties.Single(p => p.UserId == userData.UserId);
+                    for (int i = 0; i < userData.Entries; i++)
+                        computePenalties.Add(origPenalty);
+                }
+                else
+                {
+                    var newPenalty = new GiveawayPenaltySignup() { UserId = userData.UserId, PenaltyCount = 0 };
+                    for (int i = 0; i < userData.Entries; i++)
+                        computePenalties.Add(newPenalty);
+                }
+            }
+
+            Random rand = new Random();
+            var winners = new List<ulong>();
+            while (winners.Count < targetWinnerCount)
+            {
+                // Get a random user
+                var next = rand.Next(0, computePenalties.Count - 1);
+                var currPs = computePenalties[next];
+
+                if (currPs.PenaltyCount > 0)
+                {
+                    // This user has penalties so decrement the penalty of their entry
+                    currPs.PenaltyCount -= 1;
+
+                    // We landed on a penalty so reroll
+                    continue;
+                }
+
+                // We landed on a user that's already won so reroll
+                if (winners.Contains(currPs.UserId))                    
+                    continue;
+
+                // User had no penalties left so they win
+                winners.Add(currPs.UserId);
+            }
+
+            return winners;
+        }
+
+        public async Task<List<GiveawayPenaltySignup>> GetPenalties(
+            List<RollComputeUserData> userDatas, 
+            ulong roleId)
+        {            
+            // We use different "buckets" of giveaways. For example, VIP giveaways should not be affected by
+            // public giveaways and vice versa when calculating penalties = the VIP giveaway users should not be punished
+            // for signing up for public giveaways
+            // So for calculating penalties we only consider past giveaways that belonged to the role for this giveaway                
+            List<PastGiveawayWinner> pastWinners;
+            using (var con = _dbConnectionFactory.GetNewConnection()) { 
+                pastWinners = await new GetPastGiveawayWinnersPerRole(con).Execute(roleId);
+            }
+
+            var res = new List<GiveawayPenaltySignup>();
+            if (!pastWinners.Any())
+            {
+                // No wins recorded for this role so return a default state
+                foreach (var userData in userDatas)
+                    for (int i = 0; i < userData.Entries; i++)
+                        res.Add(new GiveawayPenaltySignup() { UserId = userData.UserId, PenaltyCount = 0 });
+
+                return res;
+            }
+
+            // Users are assigned a penalty count if they have recently won 
+            // which will later be used to force a reroll if a roll lands on this user
+            // If a user has multiple tokens they get a better chance in the distribution 
+            // since they are added multiple times
+
+            // We use roleMemberCount to check the max size of the giveaway and to calculate a linear decay period
+            // This is to gauge the interest of the giveaway. If almost all members of a role are participating
+            // then this giveaway is highly coveted and should have a larger impact on the penalty
+            // likewise if nobody cares about it, because it's a trash giveaway, then only a minor penalty should be given
+            int giveawayParticipants = userDatas.Count();
+            foreach (var userData in userDatas)
+            {
+                int totalPenalty = 0;
+
+                var twoMonthsAgo = DateTime.UtcNow.AddMonths(-2);
+                var pastWins = pastWinners
+                    .Where(p => p.UserId == userData.UserId)
+                    .Where(p => p.EndDate >= twoMonthsAgo)
+                    .ToList();
+
+                foreach (var win in pastWins)
+                {
+                    var tickDelta = (double)(DateTime.UtcNow - twoMonthsAgo).Ticks;
+                    var pastTickDelta = (double)(DateTime.UtcNow - win.EndDate).Ticks;
+
+                    // linear decay over time
+                    // A recent win will be treated with higher penalty
+                    // If high (~1) then the user recently won
+                    // If low (~0) the user won a long time ago
+                    double tickRatio = pastTickDelta / tickDelta;
+
+                    var signups = (double) win.Signups;
+                    var maxParticipants = (double) win.MaxParticipants;
+
+                    // Calculate the participation ratio of this giveaway
+                    // If high (~1) then the giveaway was highly coveted
+                    // If low (~0) then nobody cared and the user should not be punished for winning trash
+                    double participationRatio = signups / maxParticipants;
+
+                    // Even if a participationRatio was high, provided the tickRatio is sufficiently low
+                    // that is, it was a long time ago since the giveaway happened, then a penalty should not be given
+                    // Conversely, if it was recent then a time penalty should be applied regardless of participation
+                    // However, if participation was low then the time penalty will soon not be applied
+                    if (tickRatio + participationRatio >= 1)
+                        totalPenalty += 1;
+                }
+
+                // Do not make it impossible for a historically lucky user to win
+                // This is difficult enough
+                if (totalPenalty > 3)
+                    totalPenalty = 3;
+
+                res.Add(new GiveawayPenaltySignup()
+                {
+                    PenaltyCount = totalPenalty,
+                    UserId = userData.UserId
+                });
+            }
+
+            return res;
+        }
+    }
+}
