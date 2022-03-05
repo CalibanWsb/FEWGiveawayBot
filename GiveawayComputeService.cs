@@ -5,7 +5,6 @@ using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace FEW.GiveawayBot.App.Services
@@ -45,13 +44,19 @@ namespace FEW.GiveawayBot.App.Services
                 {
                     var origPenalty = origPenalties.First(p => p.UserId == userData.UserId);
                     for (int i = 0; i < userData.Entries; i++)
-                        computePenalties.Add(origPenalty);
+                        computePenalties.Add(new GiveawayPenaltySignup()
+                        {
+                            UserId = userData.UserId,
+                            PenaltyScore = origPenalty.PenaltyScore
+                        });
                 }
                 else
-                {
-                    var newPenalty = new GiveawayPenaltySignup() { UserId = userData.UserId, PenaltyCount = 0 };
+                {                    
                     for (int i = 0; i < userData.Entries; i++)
-                        computePenalties.Add(newPenalty);
+                        computePenalties.Add(new GiveawayPenaltySignup() { 
+                            UserId = userData.UserId, 
+                            PenaltyScore = 0 
+                        });
                 }
             }
 
@@ -63,10 +68,10 @@ namespace FEW.GiveawayBot.App.Services
                 var next = rand.Next(0, computePenalties.Count);
                 var currPs = computePenalties[next];
 
-                if (currPs.PenaltyCount > 0)
+                if (currPs.PenaltyScore > 0)
                 {
                     // This user has penalties so decrement the penalty of their entry
-                    currPs.PenaltyCount -= 1;
+                    currPs.PenaltyScore -= 1;
 
                     // We landed on a penalty so reroll
                     continue;
@@ -102,7 +107,7 @@ namespace FEW.GiveawayBot.App.Services
                 // No wins recorded for this role so return a default state
                 foreach (var userData in userDatas)
                     for (int i = 0; i < userData.Entries; i++)
-                        res.Add(new GiveawayPenaltySignup() { UserId = userData.UserId, PenaltyCount = 0 });
+                        res.Add(new GiveawayPenaltySignup() { UserId = userData.UserId, PenaltyScore = 0 });
 
                 return res;
             }
@@ -119,17 +124,17 @@ namespace FEW.GiveawayBot.App.Services
             int giveawayParticipants = userDatas.Count();
             foreach (var userData in userDatas)
             {
-                int totalPenalty = 0;
+                double totalPenalty = 0;
 
-                var twoMonthsAgo = DateTime.UtcNow.AddMonths(-2);
+                var pastTime = DateTime.UtcNow.AddMonths(-2);
                 var pastWins = pastWinners
                     .Where(p => p.UserId == userData.UserId)
-                    .Where(p => p.EndDate >= twoMonthsAgo)
+                    .Where(p => p.EndDate >= pastTime)
                     .ToList();
 
                 foreach (var win in pastWins)
                 {
-                    var tickDelta = (double)(DateTime.UtcNow - twoMonthsAgo).Ticks;
+                    var tickDelta = (double)(DateTime.UtcNow - pastTime).Ticks;
                     var pastTickDelta = (double)(DateTime.UtcNow - win.EndDate).Ticks;
 
                     // linear decay over time
@@ -150,8 +155,9 @@ namespace FEW.GiveawayBot.App.Services
                     // that is, it was a long time ago since the giveaway happened, then a penalty should not be given
                     // Conversely, if it was recent then a time penalty should be applied regardless of participation
                     // However, if participation was low then the time penalty will soon not be applied
-                    if (tickRatio + participationRatio >= 1)
-                        totalPenalty += 1;
+
+                    totalPenalty += tickRatio;
+                    totalPenalty += participationRatio;
                 }
 
                 // Do not make it impossible for a historically lucky user to win
@@ -161,7 +167,7 @@ namespace FEW.GiveawayBot.App.Services
 
                 res.Add(new GiveawayPenaltySignup()
                 {
-                    PenaltyCount = totalPenalty,
+                    PenaltyScore = totalPenalty,
                     UserId = userData.UserId
                 });
             }
