@@ -1,4 +1,4 @@
-﻿using Few.Giveaway.Domain;
+using Few.Giveaway.Domain;
 using FEW.Db.CQS;
 using FEW.Db.DbConnection;
 using Serilog;
@@ -43,7 +43,7 @@ namespace FEW.GiveawayBot.App.Services
             {
                 if (origPenaltyUserIds.Contains(userData.UserId))
                 {
-                    var origPenalty = origPenalties.Single(p => p.UserId == userData.UserId);
+                    var origPenalty = origPenalties.First(p => p.UserId == userData.UserId);
                     for (int i = 0; i < userData.Entries; i++)
                         computePenalties.Add(origPenalty);
                 }
@@ -73,7 +73,7 @@ namespace FEW.GiveawayBot.App.Services
                 }
 
                 // We landed on a user that's already won so reroll
-                if (winners.Contains(currPs.UserId))                    
+                if (winners.Contains(currPs.UserId))
                     continue;
 
                 // User had no penalties left so they win
@@ -136,15 +136,15 @@ namespace FEW.GiveawayBot.App.Services
                     // A recent win will be treated with higher penalty
                     // If high (~1) then the user recently won
                     // If low (~0) the user won a long time ago
-                    double tickRatio = pastTickDelta / tickDelta;
+                    double tickRatio = 1 - (pastTickDelta / tickDelta);
 
                     var signups = (double) win.Signups;
                     var maxParticipants = (double) win.MaxParticipants;
 
                     // Calculate the participation ratio of this giveaway
-                    // If high (~1) then the giveaway was highly coveted
+                    // If high (~0.5) then the giveaway was highly coveted
                     // If low (~0) then nobody cared and the user should not be punished for winning trash
-                    double participationRatio = signups / maxParticipants;
+                    double participationRatio = (signups / maxParticipants) / 2;
 
                     // Even if a participationRatio was high, provided the tickRatio is sufficiently low
                     // that is, it was a long time ago since the giveaway happened, then a penalty should not be given
