@@ -151,11 +151,7 @@ namespace FEW.GiveawayBot.App.Services
                     // If low (~0) then nobody cared and the user should not be punished for winning trash
                     double participationRatio = (signups / maxParticipants) / 2;
 
-                    // Even if a participationRatio was high, provided the tickRatio is sufficiently low
-                    // that is, it was a long time ago since the giveaway happened, then a penalty should not be given
-                    // Conversely, if it was recent then a time penalty should be applied regardless of participation
-                    // However, if participation was low then the time penalty will soon not be applied
-
+                    // We apply the total penalties according to the above reasoning
                     totalPenalty += tickRatio;
                     totalPenalty += participationRatio;
                 }
