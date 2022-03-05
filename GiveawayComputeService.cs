@@ -60,7 +60,7 @@ namespace FEW.GiveawayBot.App.Services
             while (winners.Count < targetWinnerCount)
             {
                 // Get a random user
-                var next = rand.Next(0, computePenalties.Count - 1);
+                var next = rand.Next(0, computePenalties.Count);
                 var currPs = computePenalties[next];
 
                 if (currPs.PenaltyCount > 0)
