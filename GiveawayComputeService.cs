@@ -158,8 +158,8 @@ namespace FEW.GiveawayBot.App.Services
 
                 // Do not make it impossible for a historically lucky user to win
                 // This is difficult enough
-                if (totalPenalty > 3)
-                    totalPenalty = 3;
+                if (totalPenalty > 4)
+                    totalPenalty = 4;
 
                 res.Add(new GiveawayPenaltySignup()
                 {
