@@ -106,8 +106,7 @@ namespace FEW.GiveawayBot.App.Services
             {
                 // No wins recorded for this role so return a default state
                 foreach (var userData in userDatas)
-                    for (int i = 0; i < userData.Entries; i++)
-                        res.Add(new GiveawayPenaltySignup() { UserId = userData.UserId, PenaltyScore = 0 });
+                    res.Add(new GiveawayPenaltySignup() { UserId = userData.UserId, PenaltyScore = 0 });
 
                 return res;
             }
